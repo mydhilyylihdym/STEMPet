@@ -1,0 +1,356 @@
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+
+// ================= TFT PINS =================
+#define TFT_CS   15
+#define TFT_DC   2
+#define TFT_RST  4
+
+// ================= BUTTONS =================
+#define BTN_A 12
+#define BTN_B 13
+#define BTN_C 14
+#define BTN_D 27
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+
+// ================= SYSTEM STATES =================
+enum SystemState {
+  AGE_SELECT,
+  LEVEL_SELECT,
+  QUESTION_SCREEN
+};
+
+SystemState currentState;
+
+// ================= GAME VARIABLES =================
+int selectedAge = 0;
+int selectedLevel = 0;
+int streak = 0;
+const int STREAK_REQUIRED = 10;
+
+// ================= QUESTION ENGINE =================
+char currentQuestionText[30];
+char options[4][10];
+int correctAnswer;
+
+// Prevent immediate repeats
+int lastA = -1;
+int lastB = -1;
+int lastAnswer = -1;
+
+// ================= PRAISE MESSAGES =================
+const char* praiseMessages[] = {
+  "Good Work!",
+  "Keep It Up!",
+  "Awesome!",
+  "Math Star!",
+  "Brilliant!",
+  "Super Smart!",
+  "You Rock!"
+};
+const int praiseCount = 7;
+
+// ================= DEBOUNCE =================
+unsigned long lastPressTime = 0;
+const int debounceDelay = 200;
+
+bool buttonPressed(int pin) {
+  if (digitalRead(pin) == LOW) {
+    if (millis() - lastPressTime > debounceDelay) {
+      lastPressTime = millis();
+      return true;
+    }
+  }
+  return false;
+}
+
+// ================= SETUP =================
+void setup() {
+  pinMode(BTN_A, INPUT_PULLUP);
+  pinMode(BTN_B, INPUT_PULLUP);
+  pinMode(BTN_C, INPUT_PULLUP);
+  pinMode(BTN_D, INPUT_PULLUP);
+
+  randomSeed(analogRead(34));
+
+  tft.begin();
+  tft.setRotation(1);
+
+  showWelcomeScreen();
+  waitForStart();
+
+  showAgeMenu();
+  currentState = AGE_SELECT;
+}
+
+// ================= LOOP =================
+void loop() {
+  if (currentState == AGE_SELECT) handleAgeSelect();
+  if (currentState == LEVEL_SELECT) handleLevelSelect();
+  if (currentState == QUESTION_SCREEN) handleQuestion();
+}
+
+// ================= WELCOME SCREEN =================
+void showWelcomeScreen() {
+  tft.fillScreen(ILI9341_BLACK);
+
+  tft.setTextColor(ILI9341_CYAN);
+  tft.setTextSize(3);
+  tft.setCursor(40, 40);
+  tft.println("HEY CHAMP!");
+
+  delay(800);
+
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(20, 100);
+  tft.println("Lets start your");
+  tft.setCursor(50, 130);
+  tft.println("Maths Journey!");
+
+  delay(1200);
+
+  tft.setTextColor(ILI9341_YELLOW);
+  tft.setCursor(30, 190);
+  tft.println("Press Any Button");
+}
+
+void waitForStart() {
+  while (true) {
+    if (buttonPressed(BTN_A) ||
+        buttonPressed(BTN_B) ||
+        buttonPressed(BTN_C) ||
+        buttonPressed(BTN_D)) {
+      break;
+    }
+  }
+}
+
+// ================= AGE MENU =================
+void showAgeMenu() {
+  tft.fillScreen(ILI9341_BLUE);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(3);
+
+  tft.setCursor(40, 20);
+  tft.println("Choose Age");
+
+  tft.setTextSize(2);
+  tft.setCursor(60, 80);  tft.println("A) 5-6");
+  tft.setCursor(60, 120); tft.println("B) 7-8");
+  tft.setCursor(60, 160); tft.println("C) 9-12");
+}
+
+void handleAgeSelect() {
+  if (buttonPressed(BTN_A)) { selectedAge = 0; goToLevel(); }
+  if (buttonPressed(BTN_B)) { selectedAge = 1; goToLevel(); }
+  if (buttonPressed(BTN_C)) { selectedAge = 2; goToLevel(); }
+}
+
+void goToLevel() {
+  showLevelMenu();
+  currentState = LEVEL_SELECT;
+}
+
+// ================= LEVEL MENU =================
+void showLevelMenu() {
+  tft.fillScreen(ILI9341_GREEN);
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setTextSize(3);
+
+  tft.setCursor(60, 20);
+  tft.println("Select Level");
+
+  tft.setTextSize(2);
+  for (int i = 0; i < 4; i++) {
+    tft.setCursor(80, 70 + i * 30);
+    tft.print((char)('A' + i));
+    tft.print(") Level ");
+    tft.println(i + 1);
+  }
+}
+
+void handleLevelSelect() {
+  if (buttonPressed(BTN_A)) startLevel(0);
+  if (buttonPressed(BTN_B)) startLevel(1);
+  if (buttonPressed(BTN_C)) startLevel(2);
+  if (buttonPressed(BTN_D)) startLevel(3);
+}
+
+void startLevel(int level) {
+  selectedLevel = level;
+  streak = 0;
+  currentState = QUESTION_SCREEN;
+  displayQuestion();
+}
+
+// ================= QUESTION DISPLAY =================
+void displayQuestion() {
+  generateQuestion();
+
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setTextColor(ILI9341_YELLOW);
+  tft.setTextSize(2);
+
+  tft.setCursor(10, 10);
+  tft.print("Streak: ");
+  tft.println(streak);
+
+  tft.setCursor(10, 40);
+  tft.println(currentQuestionText);
+
+  tft.setCursor(10, 90);
+  tft.print("A) "); tft.println(options[0]);
+  tft.setCursor(10, 120);
+  tft.print("B) "); tft.println(options[1]);
+  tft.setCursor(10, 150);
+  tft.print("C) "); tft.println(options[2]);
+  tft.setCursor(10, 180);
+  tft.print("D) "); tft.println(options[3]);
+}
+
+// ================= QUESTION LOGIC =================
+void handleQuestion() {
+  int pressed = -1;
+
+  if (buttonPressed(BTN_A)) pressed = 0;
+  if (buttonPressed(BTN_B)) pressed = 1;
+  if (buttonPressed(BTN_C)) pressed = 2;
+  if (buttonPressed(BTN_D)) pressed = 3;
+
+  if (pressed == -1) return;
+
+  if (pressed == correctAnswer) {
+    streak++;
+    showCorrect();
+
+    if (streak >= STREAK_REQUIRED) {
+      showLevelUp();
+      streak = 0;
+
+      if (selectedLevel < 3) {
+        selectedLevel++;
+        displayQuestion();
+      } else {
+        showGameComplete();
+        showLevelMenu();
+        currentState = LEVEL_SELECT;
+      }
+      return;
+    }
+
+  } else {
+    streak = 0;
+    showWrong();
+  }
+
+  displayQuestion();
+}
+
+// ================= QUESTION GENERATOR =================
+void generateQuestion() {
+
+  int a, b, answer;
+
+  do {
+
+    if (selectedLevel == 0) { // Addition
+      if(selectedAge==0){a=random(1,5); b=random(1,5);}
+      else if(selectedAge==1){a=random(1,10);b=random(1,10);}
+      else {a=random(5,20);b=random(5,20);}
+      answer = a + b;
+    }
+    else if (selectedLevel == 1) { // Subtraction
+      if(selectedAge==0){a=random(3,10);b=random(1,4);}
+      else if(selectedAge==1){a=random(5,20);b=random(1,10);}
+      else{a=random(10,40);b=random(5,20);}
+      answer = a - b;
+    }
+    else if (selectedLevel == 2) { // Multiplication
+      if(selectedAge==0){a=random(1,5); b=random(1,5);}
+      else {a=random(2,12); b=random(2,12);}
+      answer = a * b;
+    }
+    else { // Division
+      b=random(2,10);
+      answer=random(2,10);
+      a=b*answer;
+    }
+
+  } while ((a == lastA && b == lastB) || (answer == lastAnswer));
+
+  lastA = a;
+  lastB = b;
+  lastAnswer = answer;
+
+  if (selectedLevel == 0)
+    sprintf(currentQuestionText, "%d + %d = ?", a, b);
+  else if (selectedLevel == 1)
+    sprintf(currentQuestionText, "%d - %d = ?", a, b);
+  else if (selectedLevel == 2)
+    sprintf(currentQuestionText, "%d x %d = ?", a, b);
+  else
+    sprintf(currentQuestionText, "%d / %d = ?", a, b);
+
+  int values[4] = {answer, answer + random(1,4), answer - random(1,4), answer + random(4,8)};
+
+  for(int i=0;i<4;i++){
+    int r=random(0,4);
+    int temp=values[i]; 
+    values[i]=values[r]; 
+    values[r]=temp;
+  }
+
+  for(int i=0;i<4;i++){
+    sprintf(options[i], "%d", values[i]);
+    if(values[i]==answer) correctAnswer=i;
+  }
+}
+
+// ================= FEEDBACK =================
+void showCorrect() {
+  tft.fillScreen(ILI9341_GREEN);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(4);
+  tft.setCursor(120, 50);
+  tft.println(":)");
+  tft.setTextSize(2);
+  tft.setCursor(40, 130);
+  tft.println(praiseMessages[random(0, praiseCount)]);
+  delay(1000);
+}
+
+void showWrong() {
+  tft.fillScreen(ILI9341_RED);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(4);
+  tft.setCursor(120, 50);
+  tft.println(":(");
+  tft.setTextSize(2);
+  tft.setCursor(30, 130);
+  tft.println("Try Again Champ!");
+  delay(1000);
+}
+
+void showLevelUp() {
+  tft.fillScreen(ILI9341_CYAN);
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setTextSize(3);
+  tft.setCursor(40, 80);
+  tft.println("LEVEL UP!");
+  tft.setTextSize(2);
+  tft.setCursor(40, 130);
+  tft.println("Great job Champ!");
+  delay(1500);
+}
+
+void showGameComplete() {
+  tft.fillScreen(ILI9341_MAGENTA);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(40, 120);
+  tft.println("ALL LEVELS DONE!");
+  delay(2000);
+}
